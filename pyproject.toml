@@ -1,0 +1,12 @@
+[project]
+name = "llm-gateway"
+version = "0.1.0"
+description = "OpenAI-compatible gateway for local Ollama models"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.136.0",
+    "httpx>=0.28.1",
+    "uvicorn>=0.45.0",
+    "slowapi>=0.1.9",
+]
