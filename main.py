@@ -8,8 +8,6 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
-from slowapi import Limiter
-from slowapi.util import get_remote_address
 import httpx
 
 logging.basicConfig(
@@ -24,7 +22,7 @@ PORT = int(os.getenv("PORT", "4000"))
 MAX_MESSAGES = int(os.getenv("MAX_MESSAGES", "6"))
 CACHE_MAX_SIZE = int(os.getenv("CACHE_MAX_SIZE", "256"))
 CACHE_TTL_SECONDS = int(os.getenv("CACHE_TTL_SECONDS", "3600"))
-RATE_LIMIT = os.getenv("RATE_LIMIT", "30/minute")
+RATE_LIMIT = os.getenv("RATE_LIMIT", "")
 SYSTEM_PROMPT = os.getenv("SYSTEM_PROMPT", "You are a helpful coding assistant.")
 
 
@@ -59,8 +57,19 @@ class TTLCache:
 
 cache = TTLCache(max_size=CACHE_MAX_SIZE, ttl=CACHE_TTL_SECONDS)
 
-limiter = Limiter(key_func=get_remote_address)
 
+# -------- rate limiting (optional) --------
+
+limiter = None
+if RATE_LIMIT:
+    from slowapi import Limiter
+    from slowapi.util import get_remote_address
+
+    limiter = Limiter(key_func=get_remote_address)
+    logger.info("Rate limiting enabled: %s", RATE_LIMIT)
+
+
+# -------- app --------
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -70,7 +79,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="LLM Gateway", lifespan=lifespan)
-app.state.limiter = limiter
+if limiter:
+    app.state.limiter = limiter
 
 
 # -------- utils --------
@@ -113,13 +123,11 @@ def make_response(content: str, model: str, cached: bool = False) -> dict:
 # -------- endpoints --------
 
 @app.get("/health")
-@limiter.exempt
 async def health():
     return {"status": "ok", "model": MODEL, "cache_size": len(cache)}
 
 
 @app.get("/v1/models")
-@limiter.exempt
 async def list_models():
     return {
         "object": "list",
@@ -135,7 +143,6 @@ async def list_models():
 
 
 @app.post("/v1/chat/completions")
-@limiter.limit(RATE_LIMIT)
 async def chat(request: Request):
     try:
         data = await request.json()

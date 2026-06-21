@@ -54,7 +54,12 @@ if [ -f "./main.py" ]; then
   uv venv .venv >/dev/null 2>&1 || true
   source .venv/bin/activate
 
-  uv pip install -q fastapi uvicorn httpx slowapi
+  uv pip install -q fastapi uvicorn httpx
+
+  if [[ -n "$RATE_LIMIT" ]]; then
+    uv pip install -q slowapi
+    echo "[ok] rate limiting enabled: $RATE_LIMIT"
+  fi
 
   uvicorn main:app \
     --host 0.0.0.0 \

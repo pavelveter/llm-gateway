@@ -8,5 +8,9 @@ dependencies = [
     "fastapi>=0.136.0",
     "httpx>=0.28.1",
     "uvicorn>=0.45.0",
+]
+
+[project.optional-dependencies]
+ratelimit = [
     "slowapi>=0.1.9",
 ]
