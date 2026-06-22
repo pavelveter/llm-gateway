@@ -15,7 +15,7 @@ An OpenAI-compatible LLM proxy gateway with automatic backend failover, rate-lim
 - **Circuit breaker** — exponential cooldown on repeated backend failures (15s → 30s → 60s → ...)
 - **Request body validation** — rejects payloads exceeding `LLM_MAX_REQUEST_BYTES` with 413
 - **Request tracing** — `X-Request-ID` header in all chat responses for troubleshooting
-- **Model aliasing** — route specific model names to specific backends via `LLM_MODEL_ALIASES`
+- **Model aliasing** — set `BACKEND_N_MODEL` to route specific model names to specific backends
 - **Metrics** — `/metrics` endpoint with per-backend latency stats (p50, p99), failure counts
 - **Health ping** — `/health/backends` endpoint with live HEAD requests to verify backend reachability
 - **Docker** — multi-stage build with uv, slim runtime image, healthcheck
@@ -134,13 +134,13 @@ For streaming clients, errors are delivered as SSE `data:` events with `[DONE]` 
 |---|---|---|
 | `BACKEND_N_URL` | *required* | OpenAI-compatible chat completions endpoint |
 | `BACKEND_N_KEY` | *required* | API key (sent as `Bearer <key>`) |
+| `BACKEND_N_MODEL` | *(empty)* | Route this model name exclusively to this backend |
 | `LLM_RPM_LIMIT` | `38` | Max requests per minute per backend |
 | `LLM_QUEUE_MAX` | `100` | Max pending non-streaming requests |
 | `LLM_WORKERS` | `2` | Number of worker coroutines |
 | `LLM_STREAM_CONCURRENCY` | `20` | Max simultaneously-active stream drivers. Workers *detach* stream jobs into background tasks, so dispatcher capacity (`LLM_WORKERS`) is decoupled from upstream-bound concurrency (`LLM_STREAM_CONCURRENCY`). |
 | `LLM_MAX_REQUEST_BYTES` | `1048576` | Max request body size (1 MB). Requests exceeding this get 413. |
 | `LLM_REQUEST_TIMEOUT` | `120` | Gateway-level request timeout (seconds) |
-| `LLM_MODEL_ALIASES` | *(empty)* | Model-to-backend routing. Format: `model:backend,model:backend` |
 | `PYTHONUNBUFFERED` | `1` | Set in docker-compose for real-time logs |
 
 ## Logs

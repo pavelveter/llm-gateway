@@ -24,8 +24,8 @@ def _make_mgr() -> BackendManager:
     m = BackendManager()
     m.load(
         [
-            ("backend-1", "https://api1.example.com/v1", "key-aaaa"),
-            ("backend-2", "https://api2.example.com/v1", "key-bbbb"),
+            ("backend-1", "https://api1.example.com/v1", "key-aaaa", None),
+            ("backend-2", "https://api2.example.com/v1", "key-bbbb", None),
         ]
     )
     return m

@@ -106,6 +106,7 @@ class BackendManager:
             lambda: deque(maxlen=20)
         )
         self._client: httpx.AsyncClient | None = None
+        self.model_aliases: dict[str, str] = {}
 
     @property
     def loaded(self) -> bool:
@@ -141,24 +142,28 @@ class BackendManager:
             elapsed = round(time.time() - start, 3)
             return {"name": name, "status": "unreachable", "error": type(e).__name__, "latency_ms": round(elapsed * 1000)}
 
-    def load(self, backends: list[tuple[str, str, str]]) -> None:
+    def load(self, backends: list[tuple[str, str, str, str | None]]) -> None:
         self.backends = [
             {
                 "name": name,
                 "url": url,
                 "key": key,
             }
-            for name, url, key in backends
+            for name, url, key, _model in backends
         ]
         self.limiters = {
             b["name"]: AsyncLimiter(RPM_LIMIT, 60) for b in self.backends
         }
         self.cooldowns = {b["name"]: 0.0 for b in self.backends}
+        self.model_aliases = {}
+        for name, _url, _key, model in backends:
+            if model:
+                self.model_aliases[model] = name
 
-        for name, _url, key in backends:
-            log.info("Loaded backend: %s (key=%s)", name, _mask_key(key))
+        for name, _url, key, model in backends:
+            log.info("Loaded backend: %s (key=%s, model=%s)", name, _mask_key(key), model or "*")
 
-        log.info("Loaded backends: %d", len(self.backends))
+        log.info("Loaded backends: %d, model aliases: %d", len(self.backends), len(self.model_aliases))
 
     def score(self, name: str) -> float:
         """Lower = better. 999999 means unusable. Deterministic."""
@@ -179,13 +184,11 @@ class BackendManager:
         that concurrent callers (workers, stream handlers) don't all
         thunder-herd onto the top-ranked backend.
 
-        When `model` is given and MODEL_ALIASES maps it to a backend name,
+        When `model` is given and model_aliases maps it to a backend name,
         only that backend is returned (if healthy).
         """
-        from config import MODEL_ALIASES
-
-        if model and model in MODEL_ALIASES:
-            target = MODEL_ALIASES[model]
+        if model and model in self.model_aliases:
+            target = self.model_aliases[model]
             for b in self.backends:
                 if b["name"] == target:
                     if self.score(target) < 999999.0:
