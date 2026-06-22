@@ -1,43 +1,57 @@
-from __future__ import annotations
-
 import os
+from pathlib import Path
+
+BASE_DIR = Path("/app")
+LOG_DIR = Path(os.getenv("LLM_LOG_DIR", str(BASE_DIR / "logs")))
+
+RPM_LIMIT = int(os.getenv("LLM_RPM_LIMIT", "38"))
+QUEUE_MAX = int(os.getenv("LLM_QUEUE_MAX", "100"))
+WORKERS = int(os.getenv("LLM_WORKERS", "2"))
+
+# Maximum simultaneously-active streaming completions.
+# Streams are *detached* from the worker pool: workers spawn a
+# background driver task per StreamJob and immediately move on, so a
+# burst of slow streams can't pin the worker pool and starve new
+# non-stream requests of dispatcher capacity.  This knob caps how many
+# of those background drivers run concurrently against the upstream.
+STREAM_CONCURRENCY = max(
+    int(os.getenv("LLM_STREAM_CONCURRENCY", "20")), 1
+)
 
 
-def _backends() -> list[tuple[str, str]]:
-    backends: list[tuple[str, str]] = []
-    i = 1
+def load_backends() -> list[tuple[str, str, str]]:
+    """Load backends from BACKEND_N_URL / BACKEND_N_KEY env vars.
+
+    Returns a list of (name, url, key) tuples.
+    """
+    backends: list[tuple[str, str, str]] = []
+    index = 1
+
     while True:
-        url = os.getenv(f"BACKEND_{i}_URL")
-        key = os.getenv(f"BACKEND_{i}_KEY")
-        if not url or not key:
+        url_key = f"BACKEND_{index}_URL"
+        key_key = f"BACKEND_{index}_KEY"
+
+        url = os.getenv(url_key)
+        api_key = os.getenv(key_key)
+
+        if not url and not api_key:
             break
-        backends.append((url, key))
-        i += 1
+
+        if not url:
+            raise ValueError(
+                f"{url_key} is missing while {key_key} is set"
+            )
+        if not api_key:
+            raise ValueError(
+                f"{key_key} is missing while {url_key} is set"
+            )
+
+        backends.append((f"backend-{index}", url, api_key))
+        index += 1
+
+    if not backends:
+        raise RuntimeError(
+            "No backends configured — set BACKEND_1_URL and BACKEND_1_KEY"
+        )
+
     return backends
-
-
-_backend_list = _backends()
-
-BACKEND_URLS: list[str] = [b[0] for b in _backend_list]
-BACKEND_KEYS: list[str] = [b[1] for b in _backend_list]
-BACKEND_NAMES: list[str] = [f"backend-{i}" for i in range(1, len(_backend_list) + 1)]
-
-rpm_limit = int(os.getenv("LLM_RPM_LIMIT", "38"))
-queue_max = int(os.getenv("LLM_QUEUE_MAX", "100"))
-workers = int(os.getenv("LLM_WORKERS", "2"))
-stream_concurrency = int(os.getenv("LLM_STREAM_CONCURRENCY", "20"))
-cooldown_timeout = int(os.getenv("LLM_COOLDOWN_TIMEOUT", "10"))
-cooldown_error = int(os.getenv("LLM_COOLDOWN_ERROR", "15"))
-
-log_dir = os.getenv("LLM_LOG_DIR", "logs")
-
-
-class CFG:
-    rpm_limit = rpm_limit
-    queue_max = queue_max
-    workers = workers
-    stream_concurrency = stream_concurrency
-    cooldown_timeout = cooldown_timeout
-    cooldown_error = cooldown_error
-    log_dir = log_dir
-    backends = list(zip(BACKEND_NAMES, BACKEND_URLS, BACKEND_KEYS))

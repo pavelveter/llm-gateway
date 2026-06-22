@@ -1,53 +1,47 @@
-from __future__ import annotations
-
-import json
 import logging
-import os
-import time
 from logging.handlers import RotatingFileHandler
 
-from config import CFG
+from config import LOG_DIR
+
+LOG_FORMAT = "%(asctime)s | %(levelname)s | %(message)s"
+DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 
-def _make_logger(name: str, filename: str) -> logging.Logger:
-    os.makedirs(CFG.log_dir, exist_ok=True)
-    logger = logging.getLogger(name)
-    logger.setLevel(logging.INFO)
-    handler = RotatingFileHandler(
-        os.path.join(CFG.log_dir, filename),
-        maxBytes=5 * 1024 * 1024,
-        backupCount=3,
+def setup_logging() -> tuple[logging.Logger, logging.Logger]:
+    """Configure system and chat loggers, return (system_log, chat_log)"""
+    LOG_DIR.mkdir(exist_ok=True)
+
+    formatter = logging.Formatter(LOG_FORMAT, datefmt=DATE_FORMAT)
+
+    # ── system logger ──────────────────────────────────────
+    system_log = logging.getLogger("system")
+    system_log.setLevel(logging.INFO)
+
+    sys_file = RotatingFileHandler(
+        LOG_DIR / "system.log",
+        maxBytes=10 * 1024 * 1024,
+        backupCount=5,
+        encoding="utf-8",
     )
-    handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
-    logger.addHandler(handler)
-    return logger
+    sys_file.setFormatter(formatter)
 
+    sys_stdout = logging.StreamHandler()
+    sys_stdout.setFormatter(formatter)
 
-sys_log = _make_logger("system", "system.log")
+    system_log.addHandler(sys_file)
+    system_log.addHandler(sys_stdout)
 
+    # ── chat logger ─────────────────────────────────────────
+    chat_log = logging.getLogger("chat")
+    chat_log.setLevel(logging.INFO)
 
-class _ChatLogger:
-    def __init__(self):
-        self._logger = _make_logger("chat", "chat.log")
+    chat_file = RotatingFileHandler(
+        LOG_DIR / "chat.log",
+        maxBytes=50 * 1024 * 1024,
+        backupCount=10,
+        encoding="utf-8",
+    )
+    chat_file.setFormatter(formatter)
+    chat_log.addHandler(chat_file)
 
-    def log_request(self, *, model: str, messages: list[dict], backend: str = ""):
-        self._logger.info(json.dumps({
-            "ts": time.time(),
-            "type": "request",
-            "model": model,
-            "messages": [m.get("content", "")[:200] for m in messages],
-            "backend": backend,
-        }, ensure_ascii=False))
-
-    def log_response(self, *, model: str, content: str, backend: str = "", latency: float = 0):
-        self._logger.info(json.dumps({
-            "ts": time.time(),
-            "type": "response",
-            "model": model,
-            "content": content[:500],
-            "backend": backend,
-            "latency": round(latency, 3),
-        }, ensure_ascii=False))
-
-
-chat_log = _ChatLogger()
+    return system_log, chat_log

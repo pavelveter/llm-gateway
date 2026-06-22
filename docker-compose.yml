@@ -1,11 +1,22 @@
 services:
   gateway:
     build: .
+
+    container_name: llm-gateway
+
     ports:
       - "4000:4000"
-    env_file: .env
-    environment:
-      - PYTHONUNBUFFERED=1
+
+    env_file:
+      - .env
+
     volumes:
       - ./logs:/app/logs
+
     restart: unless-stopped
+
+    mem_limit: 350m
+    cpus: 1.0
+
+    environment:
+      PYTHONUNBUFFERED: "1"

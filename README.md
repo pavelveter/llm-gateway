@@ -5,7 +5,7 @@ An OpenAI-compatible LLM proxy gateway with automatic backend failover, rate-lim
 ## Features
 
 - **Multi-backend failover** — configure multiple upstream LLM APIs; the gateway routes to the healthiest one
-- **Smart error propagation** — returns proper HTTP status codes (429, 504, 502, 503) and Retry-After headers to clients instead of a generic 503
+- **Smart error propagation** — returns proper HTTP status codes (429, 504, 502, 503) and `Retry-After` headers to clients instead of a generic 503
 - **Streaming** — real SSE pass-through from upstream backends with failover
 - **Rate limiting** — per-backend RPM limits via token bucket (aiolimiter)
 - **Cooldown scoring** — backends that fail get temporary cooldowns (10s for timeouts, 15s for other errors); the gateway routes around them
@@ -19,7 +19,7 @@ An OpenAI-compatible LLM proxy gateway with automatic backend failover, rate-lim
 
 Copy `.env.example` to `.env` and fill in your API URLs and keys:
 
-```
+```env
 BACKEND_1_URL=https://api.openai.com/v1/chat/completions
 BACKEND_1_KEY=sk-your-key-here
 
@@ -59,12 +59,12 @@ curl http://localhost:4000/v1/chat/completions \
 ## API
 
 | Endpoint | Method | Description |
-|----------|--------|-------------|
+|---|---|---|
 | `/health` | GET | Backend health status |
 | `/v1/models` | GET | Available models (proxy) |
 | `/v1/chat/completions` | POST | Chat completions (streaming + non-streaming) |
 
-## Streaming
+### Streaming
 
 Set `"stream": true` in the request body. The gateway passes SSE chunks from the upstream backend directly to the client.
 
@@ -78,7 +78,7 @@ Client → FastAPI → [stream?] → stream_backend() → BackendManager.call_st
 ### Module layout
 
 | Module | Responsibility |
-|--------|---------------|
+|---|---|
 | `gateway.py` | FastAPI app, endpoints, streaming helper |
 | `backend.py` | Backend state, scoring, HTTP calls, domain exceptions |
 | `worker.py` | Queue consumer, failover loop for non-streaming requests |
@@ -110,41 +110,41 @@ Streaming bypasses the worker queue entirely:
 The gateway maps upstream failures to meaningful HTTP status codes:
 
 | Upstream errors | Client gets |
-|----------------|-------------|
-| All backends return 429 | 429 + Retry-After header |
-| All backends timeout | 504 Gateway Timeout |
-| All backends return 5xx | 502 Bad Gateway |
-| Mixed error types | 503 Service Unavailable |
-| Queue full | 503 Queue full |
+|---|---|
+| All backends return 429 | `429` + `Retry-After` header |
+| All backends timeout | `504 Gateway Timeout` |
+| All backends return 5xx | `502 Bad Gateway` |
+| Mixed error types | `503 Service Unavailable` |
+| Queue full | `503 Queue full` |
 
-For streaming clients, errors are delivered as SSE data: events with `[DONE]` markers.
+For streaming clients, errors are delivered as SSE `data:` events with `[DONE]` markers.
 
 ## Configuration
 
 | Variable | Default | Description |
-|----------|---------|-------------|
-| `BACKEND_N_URL` | required | OpenAI-compatible chat completions endpoint |
-| `BACKEND_N_KEY` | required | API key (sent as `Bearer <key>`) |
-| `LLM_RPM_LIMIT` | 38 | Max requests per minute per backend |
-| `LLM_QUEUE_MAX` | 100 | Max pending non-streaming requests |
-| `LLM_WORKERS` | 2 | Number of worker coroutines |
-| `LLM_STREAM_CONCURRENCY` | 20 | Max simultaneously-active stream drivers |
-| `PYTHONUNBUFFERED` | 1 | Set in docker-compose for real-time logs |
+|---|---|---|
+| `BACKEND_N_URL` | *required* | OpenAI-compatible chat completions endpoint |
+| `BACKEND_N_KEY` | *required* | API key (sent as `Bearer <key>`) |
+| `LLM_RPM_LIMIT` | `38` | Max requests per minute per backend |
+| `LLM_QUEUE_MAX` | `100` | Max pending non-streaming requests |
+| `LLM_WORKERS` | `2` | Number of worker coroutines |
+| `LLM_STREAM_CONCURRENCY` | `20` | Max simultaneously-active stream drivers. Workers *detach* stream jobs into background tasks, so dispatcher capacity (`LLM_WORKERS`) is decoupled from upstream-bound concurrency (`LLM_STREAM_CONCURRENCY`). |
+| `PYTHONUNBUFFERED` | `1` | Set in docker-compose for real-time logs |
 
 ## Logs
 
 Two rotating log files in `./logs/`:
 
-- `system.log` — request tracing, backend selection, errors
-- `chat.log` — user prompts and assistant responses (JSON lines)
+- **`system.log`** — request tracing, backend selection, errors
+- **`chat.log`** — user prompts and assistant responses (JSON lines)
 
 ## Development
 
-Requires Python >= 3.11 and [uv](https://docs.astral.sh/uv/):
+Requires Python ≥ 3.11 and [uv](https://docs.astral.sh/uv/):
 
 ```bash
 uv sync
 uv run uvicorn gateway:app --host 0.0.0.0 --port 4000 --reload
 ```
 
-Set environment variables from `.env` before running (or use dotenv).
+Set environment variables from `.env` before running (or use `dotenv`).

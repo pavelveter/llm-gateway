@@ -1,21 +1,19 @@
-FROM python:3.13-slim AS base
+# ── build stage (uv) ──────────────────────────────────────
+FROM ghcr.io/astral-sh/uv:latest AS uv-bin
 
-RUN pip install --no-cache-dir uv
-
+FROM python:3.11-slim AS builder
+COPY --from=uv-bin /uv /usr/local/bin/uv
 WORKDIR /app
-
-COPY pyproject.toml uv.lock ./
+COPY pyproject.toml uv.lock .
 RUN uv sync --frozen --no-dev
 
-COPY . .
+# ── runtime stage (slim) ───────────────────────────────────
+FROM python:3.11-slim
+WORKDIR /app
 
-FROM base AS runtime
+COPY --from=builder /app/.venv /app/.venv
+COPY *.py .
 
-ENV PYTHONUNBUFFERED=1
+ENV PATH="/app/.venv/bin:$PATH"
 
-EXPOSE 4000
-
-HEALTHCHECK --interval=10s --timeout=3s --retries=3 \
-    CMD python -c "import httpx; httpx.get('http://localhost:4000/health').raise_for_status()"
-
-CMD ["uv", "run", "uvicorn", "gateway:app", "--host", "0.0.0.0", "--port", "4000"]
+CMD ["uvicorn", "gateway:app", "--host", "0.0.0.0", "--port", "4000"]

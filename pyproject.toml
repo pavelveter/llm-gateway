@@ -1,13 +1,22 @@
 [project]
 name = "llm-gateway"
-version = "0.2.0"
-description = "OpenAI-compatible LLM proxy gateway with multi-backend failover"
-readme = "README.md"
+version = "0.1.0"
+description = "OpenAI-compatible LLM gateway with backend failover"
 requires-python = ">=3.11"
 dependencies = [
-    "fastapi>=0.136.0",
-    "httpx>=0.28.1",
-    "uvicorn>=0.45.0",
-    "pydantic>=2.0",
-    "aiolimiter>=1.1.0",
+    "fastapi>=0.115",
+    "uvicorn>=0.34",
+    "httpx>=0.28",
+    "aiolimiter>=1.2",
+    "pydantic>=2.10",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.25",
 ]
