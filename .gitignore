@@ -1,19 +1,18 @@
-# Python-generated files
+# Python
 __pycache__/
 *.py[oc]
 build/
 dist/
-wheels/
 *.egg-info
 
 # Virtual environments
 .venv
 
-# Logs
-*.log
-
 # Environment files (keep .env.example)
 .env
 
-# Personal data / sensitive files
+# Logs
+logs/
+
+# Sensitive files
 roskomnadzor_complaint.txt

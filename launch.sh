@@ -2,89 +2,21 @@
 
 set -e
 
-echo "[boot] starting LLM environment..."
+echo "[boot] starting llm-gateway..."
 
-# ===== CONFIG =====
-OLLAMA_HOST="http://localhost:11434"
-OLLAMA_PID=""
-INTERCEPTOR_PID=""
-
-# ===== CLEANUP =====
-cleanup() {
-  echo ""
-  echo "[shutdown] stopping services..."
-
-  if [[ -n "$INTERCEPTOR_PID" ]]; then
-    kill "$INTERCEPTOR_PID" 2>/dev/null || true
-    echo "[shutdown] interceptor stopped"
-  fi
-
-  if [[ -n "$OLLAMA_PID" ]]; then
-    kill "$OLLAMA_PID" 2>/dev/null || true
-    echo "[shutdown] ollama stopped"
-  fi
-
-  exit 0
-}
-
-trap cleanup SIGINT SIGTERM
-
-# ===== 1. START OLLAMA =====
-echo "[1/2] checking ollama..."
-
-if ! command -v ollama &> /dev/null; then
-  echo "[error] ollama not installed"
+if [ ! -f ".env" ]; then
+  echo "[error] .env not found — copy .env.example to .env and configure backends"
   exit 1
 fi
 
-if ! lsof -i :11434 > /dev/null 2>&1; then
-  echo "[start] launching ollama server..."
-  ollama serve > ollama.log 2>&1 &
-  OLLAMA_PID=$!
-  sleep 2
-  echo "[ok] ollama started (pid=$OLLAMA_PID)"
-else
-  echo "[ok] ollama already running"
-fi
+uv venv .venv >/dev/null 2>&1 || true
+source .venv/bin/activate
 
-# ===== 2. OPTIONAL INTERCEPTOR =====
-echo "[2/2] starting interceptor..."
+uv sync --frozen --no-dev 2>/dev/null || uv pip install -q fastapi httpx uvicorn pydantic aiolimiter
 
-if [ -f "./main.py" ]; then
-  uv venv .venv >/dev/null 2>&1 || true
-  source .venv/bin/activate
+echo "[ok] dependencies ready"
 
-  uv pip install -q fastapi uvicorn httpx
-
-  if [[ -n "$RATE_LIMIT" ]]; then
-    uv pip install -q slowapi
-    echo "[ok] rate limiting enabled: $RATE_LIMIT"
-  fi
-
-  uvicorn main:app \
-    --host 0.0.0.0 \
-    --port "${PORT:-4000}" \
-    --reload \
-    > interceptor.log 2>&1 &
-
-  INTERCEPTOR_PID=$!
-
-  echo "[ok] interceptor running (pid=$INTERCEPTOR_PID)"
-else
-  echo "[skip] no interceptor (main.py not found)"
-fi
-
-echo ""
-echo "[ready] system is up"
-echo ""
-echo "  Model:    ${MODEL:-minimax-m2.7:cloud}"
-echo "  Ollama:   http://localhost:11434"
-echo "  Gateway:  http://localhost:${PORT:-4000}"
-echo "  Health:   http://localhost:${PORT:-4000}/health"
-echo ""
-echo "logs:"
-echo "  tail -f ollama.log"
-echo "  tail -f interceptor.log"
-echo ""
-
-wait
+uv run uvicorn gateway:app \
+  --host 0.0.0.0 \
+  --port "${PORT:-4000}" \
+  --reload

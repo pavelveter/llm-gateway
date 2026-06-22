@@ -1,0 +1,11 @@
+services:
+  gateway:
+    build: .
+    ports:
+      - "4000:4000"
+    env_file: .env
+    environment:
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./logs:/app/logs
+    restart: unless-stopped

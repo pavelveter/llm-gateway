@@ -1,48 +1,150 @@
 # llm-gateway
 
-OpenAI-compatible API gateway for local Ollama models.
+An OpenAI-compatible LLM proxy gateway with automatic backend failover, rate-limit awareness, and streaming support.
 
-Proxies `/v1/chat/completions` to a local Ollama instance with context trimming, response caching, and optional rate limiting.
+## Features
+
+- **Multi-backend failover** — configure multiple upstream LLM APIs; the gateway routes to the healthiest one
+- **Smart error propagation** — returns proper HTTP status codes (429, 504, 502, 503) and Retry-After headers to clients instead of a generic 503
+- **Streaming** — real SSE pass-through from upstream backends with failover
+- **Rate limiting** — per-backend RPM limits via token bucket (aiolimiter)
+- **Cooldown scoring** — backends that fail get temporary cooldowns (10s for timeouts, 15s for other errors); the gateway routes around them
+- **Latency-weighted selection** — among healthy backends, the fastest one is picked
+- **Chat logging** — requests and responses logged to rotating files
+- **Docker** — multi-stage build with uv, slim runtime image, healthcheck
 
 ## Quick start
 
-```bash
-./launch.sh
+### 1. Configure backends
+
+Copy `.env.example` to `.env` and fill in your API URLs and keys:
+
+```
+BACKEND_1_URL=https://api.openai.com/v1/chat/completions
+BACKEND_1_KEY=sk-your-key-here
+
+BACKEND_2_URL=https://api.anthropic.com/v1/messages
+BACKEND_2_KEY=sk-ant-another-key-here
 ```
 
-This starts Ollama (if not running) and the FastAPI gateway on port 4000.
+Add as many backends as you need: `BACKEND_3_URL`/`BACKEND_3_KEY`, etc.
 
-## Endpoints
+### 2. Run with Docker Compose
 
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/v1/chat/completions` | Chat completions (OpenAI-compatible) |
-| GET | `/v1/models` | List available models |
-| GET | `/health` | Health check |
+```bash
+docker compose up --build
+```
 
-## Configuration
+The gateway listens on `http://localhost:4000`.
 
-All settings via environment variables:
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `OLLAMA_URL` | `http://localhost:11434` | Ollama server URL |
-| `MODEL` | `minimax-m2.7:cloud` | Model to use |
-| `PORT` | `4000` | Gateway port |
-| `MAX_MESSAGES` | `6` | Max messages to keep in context |
-| `CACHE_MAX_SIZE` | `256` | Max cached responses |
-| `CACHE_TTL_SECONDS` | `3600` | Cache TTL in seconds |
-| `RATE_LIMIT` | _(disabled)_ | Rate limit per client, e.g. `30/minute`. Requires `pip install slowapi` |
-| `SYSTEM_PROMPT` | `You are a helpful coding assistant.` | System prompt injected into every request |
-
-## Example
+### 3. Send a request
 
 ```bash
 curl http://localhost:4000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
-    "messages": [
-      {"role": "user", "content": "Hello!"}
-    ]
+    "model": "gpt-4o",
+    "messages": [{"role": "user", "content": "Hello!"}]
   }'
 ```
+
+Or use `payload.json`:
+
+```bash
+curl http://localhost:4000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d @payload.json
+```
+
+## API
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/health` | GET | Backend health status |
+| `/v1/models` | GET | Available models (proxy) |
+| `/v1/chat/completions` | POST | Chat completions (streaming + non-streaming) |
+
+## Streaming
+
+Set `"stream": true` in the request body. The gateway passes SSE chunks from the upstream backend directly to the client.
+
+## Architecture
+
+```
+Client → FastAPI → [stream?] → stream_backend() → BackendManager.call_stream() → Upstream
+                  ↘ [non-stream] → Queue → Worker → BackendManager.call() → Upstream
+```
+
+### Module layout
+
+| Module | Responsibility |
+|--------|---------------|
+| `gateway.py` | FastAPI app, endpoints, streaming helper |
+| `backend.py` | Backend state, scoring, HTTP calls, domain exceptions |
+| `worker.py` | Queue consumer, failover loop for non-streaming requests |
+| `config.py` | ENV-based configuration |
+| `models.py` | Pydantic request models |
+| `logger.py` | Rotating file loggers (system + chat) |
+
+### Request flow (non-streaming)
+
+1. Request arrives at `/v1/chat/completions`
+2. Placed in `asyncio.Queue` (max `LLM_QUEUE_MAX` entries)
+3. One of `LLM_WORKERS` worker coroutines picks it up
+4. Worker sorts backends by score (latency + failures)
+5. Tries backends in order, skipping those on cooldown
+6. First successful response is returned to the client
+7. If all fail, returns the appropriate error status code
+
+### Request flow (streaming)
+
+Streaming bypasses the worker queue entirely:
+
+1. `stream_backend()` iterates backends by score
+2. Opens an SSE stream to the first available backend
+3. Yields chunks directly to the client
+4. On HTTP-level failure (429, 5xx, connection refused) before any data is flushed, the next backend is tried transparently. If the stream fails mid-flight, remaining backends are attempted but the client may see a gap or truncated response. When all backends are exhausted, an error SSE event with `[DONE]` is sent.
+
+## Error handling
+
+The gateway maps upstream failures to meaningful HTTP status codes:
+
+| Upstream errors | Client gets |
+|----------------|-------------|
+| All backends return 429 | 429 + Retry-After header |
+| All backends timeout | 504 Gateway Timeout |
+| All backends return 5xx | 502 Bad Gateway |
+| Mixed error types | 503 Service Unavailable |
+| Queue full | 503 Queue full |
+
+For streaming clients, errors are delivered as SSE data: events with `[DONE]` markers.
+
+## Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `BACKEND_N_URL` | required | OpenAI-compatible chat completions endpoint |
+| `BACKEND_N_KEY` | required | API key (sent as `Bearer <key>`) |
+| `LLM_RPM_LIMIT` | 38 | Max requests per minute per backend |
+| `LLM_QUEUE_MAX` | 100 | Max pending non-streaming requests |
+| `LLM_WORKERS` | 2 | Number of worker coroutines |
+| `LLM_STREAM_CONCURRENCY` | 20 | Max simultaneously-active stream drivers |
+| `PYTHONUNBUFFERED` | 1 | Set in docker-compose for real-time logs |
+
+## Logs
+
+Two rotating log files in `./logs/`:
+
+- `system.log` — request tracing, backend selection, errors
+- `chat.log` — user prompts and assistant responses (JSON lines)
+
+## Development
+
+Requires Python >= 3.11 and [uv](https://docs.astral.sh/uv/):
+
+```bash
+uv sync
+uv run uvicorn gateway:app --host 0.0.0.0 --port 4000 --reload
+```
+
+Set environment variables from `.env` before running (or use dotenv).
