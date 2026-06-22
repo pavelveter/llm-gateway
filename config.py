@@ -1,22 +1,22 @@
 import os
 from pathlib import Path
 
-BASE_DIR = Path("/app")
-LOG_DIR = Path(os.getenv("LLM_LOG_DIR", str(BASE_DIR / "logs")))
+LOG_DIR = Path(os.getenv("LLM_LOG_DIR", "logs"))
 
 RPM_LIMIT = int(os.getenv("LLM_RPM_LIMIT", "38"))
 QUEUE_MAX = int(os.getenv("LLM_QUEUE_MAX", "100"))
 WORKERS = int(os.getenv("LLM_WORKERS", "2"))
-
-# Maximum simultaneously-active streaming completions.
-# Streams are *detached* from the worker pool: workers spawn a
-# background driver task per StreamJob and immediately move on, so a
-# burst of slow streams can't pin the worker pool and starve new
-# non-stream requests of dispatcher capacity.  This knob caps how many
-# of those background drivers run concurrently against the upstream.
 STREAM_CONCURRENCY = max(
     int(os.getenv("LLM_STREAM_CONCURRENCY", "20")), 1
 )
+
+CORS_ORIGINS: list[str] = [
+    o.strip()
+    for o in os.getenv("LLM_CORS_ORIGINS", "*").split(",")
+    if o.strip()
+]
+MAX_REQUEST_BYTES = int(os.getenv("LLM_MAX_REQUEST_BYTES", str(1024 * 1024)))  # 1 MB
+REQUEST_TIMEOUT = float(os.getenv("LLM_REQUEST_TIMEOUT", "120"))  # seconds
 
 
 def load_backends() -> list[tuple[str, str, str]]:

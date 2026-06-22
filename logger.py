@@ -3,13 +3,15 @@ from logging.handlers import RotatingFileHandler
 
 from config import LOG_DIR
 
+__all__ = ["setup_logging"]
+
 LOG_FORMAT = "%(asctime)s | %(levelname)s | %(message)s"
 DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 
 def setup_logging() -> tuple[logging.Logger, logging.Logger]:
     """Configure system and chat loggers, return (system_log, chat_log)"""
-    LOG_DIR.mkdir(exist_ok=True)
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
 
     formatter = logging.Formatter(LOG_FORMAT, datefmt=DATE_FORMAT)
 

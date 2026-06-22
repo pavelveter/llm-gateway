@@ -160,8 +160,17 @@ class TestCooldown:
 
 
 class TestMarkSuccess:
-    def test_mark_success_resets_failures(self, mgr: BackendManager) -> None:
+    def test_mark_success_decays_failures(self, mgr: BackendManager) -> None:
         mgr.failures["backend-1"] = 5
+        mgr.mark_success("backend-1")
+        assert mgr.failures["backend-1"] == 4
+
+    def test_mark_success_full_decay_to_zero(self, mgr: BackendManager) -> None:
+        mgr.failures["backend-1"] = 1
+        mgr.mark_success("backend-1")
+        assert mgr.failures["backend-1"] == 0
+
+    def test_mark_success_no_op_when_zero(self, mgr: BackendManager) -> None:
         mgr.mark_success("backend-1")
         assert mgr.failures["backend-1"] == 0
 

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import random
 import time
 import logging
@@ -10,6 +12,36 @@ from aiolimiter import AsyncLimiter
 from config import RPM_LIMIT
 
 log = logging.getLogger("system")
+
+__all__ = [
+    "BackendError",
+    "BackendTimeout",
+    "BackendRateLimit",
+    "BackendServerError",
+    "BackendNetworkError",
+    "BackendManager",
+    "aggregate_errors",
+]
+
+
+# ── helpers ─────────────────────────────────────────────────
+
+
+def _mask_key(key: str) -> str:
+    """Mask API key for safe logging: show first 4 and last 4 chars."""
+    if len(key) <= 10:
+        return key[:2] + "***"
+    return key[:4] + "***" + key[-4:]
+
+
+def _parse_retry_after(value: str | None) -> int | None:
+    """Parse Retry-After header: seconds or HTTP-date → seconds."""
+    if not value:
+        return None
+    value = value.strip()
+    if value.isdigit():
+        return int(value)
+    return None
 
 
 # ── domain exceptions ───────────────────────────────────────
@@ -63,8 +95,7 @@ class BackendNetworkError(BackendError):
 class BackendManager:
     """Holds backend list, limiters, cooldowns, latency stats and scoring."""
 
-    # Bound jitter so that small score gaps flip, big gaps don't.
-    _JITTER_MAX = 0.2  # seconds of latency-equivalent noise
+    _JITTER_MAX = 0.2
 
     def __init__(self) -> None:
         self.backends: list[dict] = []
@@ -75,7 +106,9 @@ class BackendManager:
             lambda: deque(maxlen=20)
         )
 
-    # ── lifecycle ───────────────────────────────────────────
+    @property
+    def loaded(self) -> bool:
+        return len(self.backends) > 0
 
     def load(self, backends: list[tuple[str, str, str]]) -> None:
         self.backends = [
@@ -91,12 +124,10 @@ class BackendManager:
         }
         self.cooldowns = {b["name"]: 0.0 for b in self.backends}
 
-        for name, _url, _key in backends:
-            log.info(f"Loaded backend: {name}")
+        for name, _url, key in backends:
+            log.info("Loaded backend: %s (key=%s)", name, _mask_key(key))
 
-        log.info(f"Loaded backends: {len(self.backends)}")
-
-    # ── scoring ─────────────────────────────────────────────
+        log.info("Loaded backends: %d", len(self.backends))
 
     def score(self, name: str) -> float:
         """Lower = better. 999999 means unusable. Deterministic."""
@@ -127,7 +158,6 @@ class BackendManager:
     def _jittered_score(self, name: str) -> float:
         base = self.score(name)
         if base >= 999999.0:
-            # Unusable backends stay at the end regardless of jitter.
             return base
         return base + random.uniform(0.0, self._JITTER_MAX)
 
@@ -143,7 +173,9 @@ class BackendManager:
         self.cooldowns[name] = time.time() + actual
 
     def mark_success(self, name: str) -> None:
-        self.failures[name] = 0
+        """Decay failures on success instead of resetting to zero."""
+        if self.failures[name] > 0:
+            self.failures[name] = max(0, self.failures[name] - 1)
 
     # ── health ──────────────────────────────────────────────
 
@@ -168,7 +200,7 @@ class BackendManager:
 
         async with self.limiters[name]:
             async with httpx.AsyncClient(timeout=timeout) as client:
-                log.info(f"[{trace_id}] CONNECT {name}")
+                log.info("[%s] CONNECT %s", trace_id, name)
                 try:
                     response = await client.post(
                         backend["url"],
@@ -181,20 +213,23 @@ class BackendManager:
                 except httpx.TimeoutException as e:
                     elapsed = round(time.time() - start, 2)
                     log.warning(
-                        f"[{trace_id}] TIMEOUT {name} after {elapsed}s: {repr(e)}"
+                        "[%s] TIMEOUT %s after %.2fs: %s",
+                        trace_id, name, elapsed, type(e).__name__,
                     )
-                    raise BackendTimeout(f"{name}: {repr(e)}") from e
+                    raise BackendTimeout(f"{name}: {type(e).__name__}") from e
                 except httpx.NetworkError as e:
                     elapsed = round(time.time() - start, 2)
                     log.warning(
-                        f"[{trace_id}] NETWORK ERROR {name} after {elapsed}s: {repr(e)}"
+                        "[%s] NETWORK ERROR %s after %.2fs: %s",
+                        trace_id, name, elapsed, type(e).__name__,
                     )
-                    raise BackendNetworkError(f"{name}: {repr(e)}") from e
+                    raise BackendNetworkError(f"{name}: {type(e).__name__}") from e
 
         elapsed = round(time.time() - start, 2)
 
         log.info(
-            f"[{trace_id}] {name} status={response.status_code} latency={elapsed}s"
+            "[%s] %s status=%d latency=%.2fs",
+            trace_id, name, response.status_code, elapsed,
         )
 
         if response.status_code == 429:
@@ -212,7 +247,6 @@ class BackendManager:
                 retry_after=retry_after,
             )
 
-        # record latency only for successful calls
         self.latency_history[name].append(elapsed)
         return response.json()
 
@@ -233,7 +267,7 @@ class BackendManager:
 
         async with self.limiters[name]:
             async with httpx.AsyncClient(timeout=timeout) as client:
-                log.info(f"[{trace_id}] STREAM → {name}")
+                log.info("[%s] STREAM → %s", trace_id, name)
                 try:
                     async with client.stream(
                         "POST",
@@ -247,14 +281,13 @@ class BackendManager:
                         if response.status_code != 200:
                             elapsed = round(time.time() - start, 2)
                             log.warning(
-                                f"[{trace_id}] STREAM ERROR {name} "
-                                f"status={response.status_code} "
-                                f"latency={elapsed}s"
+                                "[%s] STREAM ERROR %s status=%d latency=%.2fs",
+                                trace_id, name, response.status_code, elapsed,
                             )
                             body = await response.aread()
                             log.warning(
-                                f"[{trace_id}] STREAM ERROR {name} "
-                                f"body={body[:200]!r}"
+                                "[%s] STREAM ERROR %s body=%r",
+                                trace_id, name, body[:200],
                             )
                             if response.status_code == 429:
                                 retry_after = _parse_retry_after(
@@ -283,49 +316,32 @@ class BackendManager:
 
                         elapsed = round(time.time() - start, 2)
                         log.info(
-                            f"[{trace_id}] STREAM DONE {name} latency={elapsed}s"
+                            "[%s] STREAM DONE %s latency=%.2fs",
+                            trace_id, name, elapsed,
                         )
                         self.latency_history[name].append(elapsed)
 
                 except httpx.TimeoutException as e:
                     elapsed = round(time.time() - start, 2)
                     log.warning(
-                        f"[{trace_id}] STREAM TIMEOUT {name} "
-                        f"after {elapsed}s: {repr(e)}"
+                        "[%s] STREAM TIMEOUT %s after %.2fs: %s",
+                        trace_id, name, elapsed, type(e).__name__,
                     )
-                    raise BackendTimeout(f"{name}: {repr(e)}") from e
+                    raise BackendTimeout(f"{name}: {type(e).__name__}") from e
                 except httpx.NetworkError as e:
                     elapsed = round(time.time() - start, 2)
                     log.warning(
-                        f"[{trace_id}] STREAM NETWORK ERROR {name} "
-                        f"after {elapsed}s: {repr(e)}"
+                        "[%s] STREAM NETWORK ERROR %s after %.2fs: %s",
+                        trace_id, name, elapsed, type(e).__name__,
                     )
-                    raise BackendNetworkError(f"{name}: {repr(e)}") from e
-
-
-# ── helpers ─────────────────────────────────────────────────
-
-
-def _parse_retry_after(value: str | None) -> int | None:
-    """Parse Retry-After header: seconds or HTTP-date → seconds."""
-    if not value:
-        return None
-    value = value.strip()
-    if value.isdigit():
-        return int(value)
-    # HTTP-date — ignored for simplicity (rarely used)
-    return None
+                    raise BackendNetworkError(f"{name}: {type(e).__name__}") from e
 
 
 def aggregate_errors(
     errors: list[Exception],
 ) -> tuple[int, str, int | None]:
     """Given all backend errors, determine the best HTTP status code,
-    detail message and optional Retry-After seconds to return.
-
-    Uses `status_code` / `retry_after` attributes when present on
-    BackendRateLimit / BackendServerError instances.
-    """
+    detail message and optional Retry-After seconds to return."""
     if not errors:
         return 503, "No backends available", None
 

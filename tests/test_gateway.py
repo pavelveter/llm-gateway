@@ -64,11 +64,11 @@ async def _drain_worker(task: asyncio.Task, stop_event: asyncio.Event) -> None:
 
 
 class TestHealth:
-    def test_health_returns_ok(self, client: TestClient) -> None:
+    def test_health_degraded_when_no_backends(self, client: TestClient) -> None:
         resp = client.get("/health")
         assert resp.status_code == 200
         body = resp.json()
-        assert body["status"] == "ok"
+        assert body["status"] == "degraded"
 
     def test_health_shows_no_backends_when_none_loaded(
         self, client: TestClient
@@ -76,13 +76,16 @@ class TestHealth:
         resp = client.get("/health")
         assert resp.status_code == 200
         assert resp.json()["backends"] == []
+        assert "error" in resp.json()
 
     def test_health_shows_loaded_backends(
         self, configured_client: TestClient
     ) -> None:
         resp = configured_client.get("/health")
         assert resp.status_code == 200
-        backends = resp.json()["backends"]
+        body = resp.json()
+        assert body["status"] == "ok"
+        backends = body["backends"]
         assert len(backends) == 2
         assert {b["name"] for b in backends} == {"backend-1", "backend-2"}
 
@@ -101,13 +104,23 @@ class TestHealth:
 
 
 class TestModels:
-    def test_models_returns_list(self, client: TestClient) -> None:
+    def test_models_empty_when_no_backends(self, client: TestClient) -> None:
         resp = client.get("/v1/models")
         assert resp.status_code == 200
         body = resp.json()
         assert body["object"] == "list"
-        assert len(body["data"]) == 1
-        assert body["data"][0]["id"] == "llm-gateway"
+        assert body["data"] == []
+
+    def test_models_returns_loaded_backends(
+        self, configured_client: TestClient
+    ) -> None:
+        resp = configured_client.get("/v1/models")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["object"] == "list"
+        assert len(body["data"]) == 2
+        names = {m["id"] for m in body["data"]}
+        assert names == {"backend-1", "backend-2"}
 
 
 # ── chat completions — non-streaming ─────────────────────────
