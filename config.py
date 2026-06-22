@@ -18,6 +18,18 @@ CORS_ORIGINS: list[str] = [
 MAX_REQUEST_BYTES = int(os.getenv("LLM_MAX_REQUEST_BYTES", str(1024 * 1024)))  # 1 MB
 REQUEST_TIMEOUT = float(os.getenv("LLM_REQUEST_TIMEOUT", "120"))  # seconds
 
+# Model aliasing: maps model names to backend names.
+# Format: MODEL_ALIASES="gpt-4o:backend-1,gpt-3.5-turbo:backend-2"
+# If a model isn't in the alias map, all backends are tried (default behavior).
+MODEL_ALIASES: dict[str, str] = {}
+_aliases_raw = os.getenv("LLM_MODEL_ALIASES", "")
+if _aliases_raw:
+    for pair in _aliases_raw.split(","):
+        pair = pair.strip()
+        if ":" in pair:
+            model_name, backend_name = pair.split(":", 1)
+            MODEL_ALIASES[model_name.strip()] = backend_name.strip()
+
 
 def load_backends() -> list[tuple[str, str, str]]:
     """Load backends from BACKEND_N_URL / BACKEND_N_KEY env vars.

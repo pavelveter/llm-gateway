@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from backend import BackendManager
 from config import (
@@ -62,6 +62,7 @@ async def lifespan(_: FastAPI):
         for w in workers:
             w.cancel()
         await asyncio.gather(*workers, return_exceptions=True)
+        await backend_mgr.close()
         log.info("Workers stopped")
 
 
@@ -76,6 +77,18 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def limit_request_size(request: Request, call_next):
+    content_length = request.headers.get("content-length")
+    if content_length and int(content_length) > MAX_REQUEST_BYTES:
+        return JSONResponse(
+            status_code=413,
+            content={"detail": "Request body too large"},
+        )
+    response = await call_next(request)
+    return response
+
+
 # ── helpers / metadata endpoints ─────────────────────────────
 
 
@@ -84,6 +97,28 @@ async def health() -> dict:
     if not backend_mgr.loaded:
         return {"status": "degraded", "backends": [], "error": "no backends loaded"}
     return {"status": "ok", "backends": backend_mgr.health()}
+
+
+@app.get("/health/backends")
+async def health_backends() -> dict:
+    if not backend_mgr.loaded:
+        return {"backends": []}
+    results = await asyncio.gather(
+        *(backend_mgr.ping(b) for b in backend_mgr.backends),
+        return_exceptions=True,
+    )
+    backends = []
+    for r in results:
+        if isinstance(r, Exception):
+            backends.append({"status": "error", "error": type(r).__name__})
+        else:
+            backends.append(r)
+    return {"backends": backends}
+
+
+@app.get("/metrics")
+async def metrics() -> dict:
+    return backend_mgr.metrics()
 
 
 @app.get("/v1/models")
@@ -157,6 +192,7 @@ async def chat(req: ChatRequest, request: Request):
         return StreamingResponse(
             _relay_stream(job, request),
             media_type="text/event-stream",
+            headers={"X-Request-ID": trace_id},
         )
 
     wrapper = FutureWrapper()
@@ -197,4 +233,4 @@ async def chat(req: ChatRequest, request: Request):
     except Exception as e:
         log.exception("[%s] CHAT LOGGING FAILED: %s", trace_id, type(e).__name__)
 
-    return result
+    return JSONResponse(content=result, headers={"X-Request-ID": trace_id})

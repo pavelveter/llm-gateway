@@ -148,7 +148,7 @@ def _on_driver_done(
 async def _drive_request(
     payload: dict, fut: FutureWrapper, backend_mgr: BackendManager
 ) -> None:
-    ordered = backend_mgr.ordered_backends(jitter=True)
+    ordered = backend_mgr.ordered_backends(jitter=True, model=payload.get("model"))
     errors: list[Exception] = []
 
     for backend in ordered:
@@ -240,7 +240,7 @@ async def _supervised_drive_stream(
 
 
 async def _drive_stream(job: StreamJob, backend_mgr: BackendManager) -> None:
-    ordered = backend_mgr.ordered_backends(jitter=True)
+    ordered = backend_mgr.ordered_backends(jitter=True, model=job.payload.get("model"))
     errors: list[Exception] = []
 
     for backend in ordered:

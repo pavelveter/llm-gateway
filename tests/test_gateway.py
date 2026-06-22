@@ -509,3 +509,152 @@ class TestChatCompletionsStreamingEndpoint:
         assert data_lines[-1].strip() == "[DONE]"
 
         await _drain_worker(w_task, stop_event)
+
+
+# ── metrics endpoint ──────────────────────────────────────────
+
+
+class TestMetrics:
+    def test_metrics_empty_when_no_backends(self, client: TestClient) -> None:
+        resp = client.get("/metrics")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["total_requests"] == 0
+
+    def test_metrics_shows_loaded_backends(
+        self, configured_client: TestClient
+    ) -> None:
+        resp = configured_client.get("/metrics")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert len(body["backends"]) == 2
+        names = {b["name"] for b in body["backends"]}
+        assert names == {"backend-1", "backend-2"}
+
+
+# ── health backends ping ──────────────────────────────────────
+
+
+class TestHealthBackends:
+    @pytest.mark.asyncio
+    async def test_health_backends_pings_all(self) -> None:
+        gw.backend_mgr.load(
+            [
+                ("b1", "https://api1.example.com/v1", "k1"),
+                ("b2", "https://api2.example.com/v1", "k2"),
+            ]
+        )
+
+        async def mock_head(url, **kwargs):
+            class MockResp:
+                status_code = 200
+            return MockResp()
+
+        gw.backend_mgr.get_client().head = mock_head  # type: ignore
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=gw.app), base_url="http://test"
+        ) as ac:
+            resp = await ac.get("/health/backends")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert len(body["backends"]) == 2
+
+    def test_health_backends_empty_when_no_backends(
+        self, client: TestClient
+    ) -> None:
+        resp = client.get("/health/backends")
+        assert resp.status_code == 200
+        assert resp.json()["backends"] == []
+
+
+# ── request body size limit ───────────────────────────────────
+
+
+class TestBodySizeLimit:
+    def test_rejects_oversized_request(self, client: TestClient) -> None:
+        large_body = "x" * (1024 * 1024 + 100)
+        resp = client.post(
+            "/v1/chat/completions",
+            content=large_body.encode(),
+            headers={"Content-Type": "application/json", "Content-Length": str(len(large_body))},
+        )
+        assert resp.status_code == 413
+
+
+# ── X-Request-ID header ──────────────────────────────────────
+
+
+class TestRequestIDHeader:
+    @pytest.mark.asyncio
+    async def test_non_streaming_includes_request_id(self) -> None:
+        from config import QUEUE_MAX
+
+        gw.request_queue = asyncio.Queue(maxsize=QUEUE_MAX)
+        gw.backend_mgr = BackendManager()
+        gw.backend_mgr.load(
+            [
+                ("b1", "https://api1.example.com/v1/chat/completions", "k1"),
+            ]
+        )
+
+        response = {"choices": [{"message": {"content": "ok"}}]}
+        gw.backend_mgr.call = AsyncMock(return_value=response)  # type: ignore[method-assign]
+
+        w_task, stop_event = _spawn_worker()
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=gw.app), base_url="http://test"
+        ) as ac:
+            resp = await ac.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "gpt-4o",
+                    "messages": [{"role": "user", "content": "Hi"}],
+                },
+            )
+
+        assert resp.status_code == 200
+        assert "X-Request-ID" in resp.headers
+        assert len(resp.headers["X-Request-ID"]) == 8
+
+        await _drain_worker(w_task, stop_event)
+
+    @pytest.mark.asyncio
+    async def test_streaming_includes_request_id(self) -> None:
+        from config import QUEUE_MAX
+
+        gw.request_queue = asyncio.Queue(maxsize=QUEUE_MAX)
+        gw.backend_mgr = BackendManager()
+        gw.backend_mgr.load(
+            [
+                ("b1", "https://api1.example.com/v1/chat/completions", "k1"),
+            ]
+        )
+
+        async def mock_stream(backend, payload, trace_id):
+            yield 'data: {"choices":[{"delta":{"content":"hi"}}]}'
+            yield "data: [DONE]"
+
+        gw.backend_mgr.call_stream = mock_stream  # type: ignore[method-assign]
+
+        w_task, stop_event = _spawn_worker()
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=gw.app), base_url="http://test"
+        ) as ac:
+            resp = await ac.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "gpt-4o",
+                    "messages": [{"role": "user", "content": "Hi"}],
+                    "stream": True,
+                },
+            )
+
+        assert resp.status_code == 200
+        assert "X-Request-ID" in resp.headers
+        assert len(resp.headers["X-Request-ID"]) == 8
+
+        await _drain_worker(w_task, stop_event)
