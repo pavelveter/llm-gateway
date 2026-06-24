@@ -9,7 +9,7 @@ from collections.abc import AsyncIterator
 import httpx
 from aiolimiter import AsyncLimiter
 
-from config import RPM_LIMIT
+from config import BASE_MODEL, RPM_LIMIT
 
 log = logging.getLogger("system")
 
@@ -105,30 +105,37 @@ class BackendManager:
         self.latency_history: defaultdict[str, deque[float]] = defaultdict(
             lambda: deque(maxlen=20)
         )
-        self._client: httpx.AsyncClient | None = None
+        self._clients: dict[str, httpx.AsyncClient] = {}
         self.model_aliases: dict[str, str] = {}
 
     @property
     def loaded(self) -> bool:
         return len(self.backends) > 0
 
-    def get_client(self) -> httpx.AsyncClient:
-        """Return the shared httpx client, creating it on first call."""
-        if self._client is None or self._client.is_closed:
+    def get_client(self, backend_name: str | None = None) -> httpx.AsyncClient:
+        """Return an httpx client for the given backend, creating it on first call.
+
+        If backend_name is None, returns the default (no-proxy) client.
+        """
+        key = backend_name or "__default__"
+        client = self._clients.get(key)
+        if client is None or client.is_closed:
             timeout = httpx.Timeout(connect=5.0, read=120.0, write=10.0, pool=5.0)
-            self._client = httpx.AsyncClient(timeout=timeout)
-        return self._client
+            client = httpx.AsyncClient(timeout=timeout)
+            self._clients[key] = client
+        return client
 
     async def close(self) -> None:
-        """Close the shared httpx client."""
-        if self._client is not None and not self._client.is_closed:
-            await self._client.aclose()
-            self._client = None
+        """Close all httpx clients."""
+        for client in self._clients.values():
+            if not client.is_closed:
+                await client.aclose()
+        self._clients.clear()
 
     async def ping(self, backend: dict) -> dict:
         """HEAD request to check if a backend is reachable."""
         name = backend["name"]
-        client = self.get_client()
+        client = self._get_backend_client(backend)
         start = time.time()
         try:
             resp = await client.head(
@@ -142,28 +149,48 @@ class BackendManager:
             elapsed = round(time.time() - start, 3)
             return {"name": name, "status": "unreachable", "error": type(e).__name__, "latency_ms": round(elapsed * 1000)}
 
-    def load(self, backends: list[tuple[str, str, str, str | None]]) -> None:
+    def load(self, backends: list[tuple[str, str, str, str | None, str | None]]) -> None:
         self.backends = [
             {
                 "name": name,
                 "url": url,
                 "key": key,
+                "proxy": proxy,
+                "model": model or BASE_MODEL,
             }
-            for name, url, key, _model in backends
+            for name, url, key, model, proxy in backends
         ]
         self.limiters = {
             b["name"]: AsyncLimiter(RPM_LIMIT, 60) for b in self.backends
         }
         self.cooldowns = {b["name"]: 0.0 for b in self.backends}
         self.model_aliases = {}
-        for name, _url, _key, model in backends:
+        for name, _url, _key, model, _proxy in backends:
             if model:
                 self.model_aliases[model] = name
 
-        for name, _url, key, model in backends:
-            log.info("Loaded backend: %s (key=%s, model=%s)", name, _mask_key(key), model or "*")
+        for name, _url, key, model, proxy in backends:
+            resolved = model or BASE_MODEL
+            log.info("Loaded backend: %s (key=%s, model=%s, proxy=%s)", name, _mask_key(key), resolved or "*", proxy or "none")
 
         log.info("Loaded backends: %d, model aliases: %d", len(self.backends), len(self.model_aliases))
+
+    def _get_backend_client(self, backend: dict) -> httpx.AsyncClient:
+        """Create or return a cached httpx client for a specific backend.
+
+        If the backend has a proxy configured, the client is created with
+        that proxy; otherwise it falls back to the default (no-proxy) client.
+        """
+        proxy: str | None = backend.get("proxy")
+        if proxy:
+            name = backend["name"]
+            client = self._clients.get(name)
+            if client is None or client.is_closed:
+                timeout = httpx.Timeout(connect=5.0, read=120.0, write=10.0, pool=5.0)
+                client = httpx.AsyncClient(timeout=timeout, proxy=proxy)
+                self._clients[name] = client
+            return client
+        return self.get_client()
 
     def score(self, name: str) -> float:
         """Lower = better. 999999 means unusable. Deterministic."""
@@ -269,12 +296,24 @@ class BackendManager:
 
     # ── call ────────────────────────────────────────────────
 
+    @staticmethod
+    def _resolve_payload(backend: dict, payload: dict) -> dict:
+        """Return a copy of payload with the model overridden per backend config.
+
+        Resolution: BACKEND_N_MODEL > BASE_MODEL > original request model.
+        """
+        backend_model: str | None = backend.get("model")
+        if backend_model:
+            return {**payload, "model": backend_model}
+        return payload
+
     async def call(self, backend: dict, payload: dict, trace_id: str) -> dict:
         """Send request to a single backend.  Raises BackendError subclasses."""
         name: str = backend["name"]
+        payload = self._resolve_payload(backend, payload)
 
         start = time.time()
-        client = self.get_client()
+        client = self._get_backend_client(backend)
 
         async with self.limiters[name]:
             log.info("[%s] CONNECT %s", trace_id, name)
@@ -338,9 +377,10 @@ class BackendManager:
         the newline.  Raises BackendError subclasses on failure.
         """
         name: str = backend["name"]
+        payload = self._resolve_payload(backend, payload)
 
         start = time.time()
-        client = self.get_client()
+        client = self._get_backend_client(backend)
 
         async with self.limiters[name]:
             log.info("[%s] STREAM → %s", trace_id, name)

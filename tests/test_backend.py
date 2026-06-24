@@ -26,8 +26,8 @@ def mgr() -> BackendManager:
     m = BackendManager()
     m.load(
         [
-            ("backend-1", "https://api1.example.com/v1", "key-aaaa", None),
-            ("backend-2", "https://api2.example.com/v1", "key-bbbb", None),
+            ("backend-1", "https://api1.example.com/v1", "key-aaaa", None, None),
+            ("backend-2", "https://api2.example.com/v1", "key-bbbb", None, None),
         ]
     )
     return m
@@ -431,3 +431,51 @@ class TestJitter:
             ordered = mgr.ordered_backends(jitter=True)
             assert ordered[0]["name"] == "backend-2"
             assert ordered[1]["name"] == "backend-1"
+
+
+# ── _resolve_payload ────────────────────────────────────────
+
+
+class TestResolvePayload:
+    def test_backend_model_overrides_payload(self) -> None:
+        backend = {"model": "gpt-4o"}
+        payload = {"model": "claude-3", "messages": []}
+        result = BackendManager._resolve_payload(backend, payload)
+        assert result["model"] == "gpt-4o"
+        assert payload["model"] == "claude-3"
+
+    def test_no_backend_model_keeps_payload(self) -> None:
+        backend: dict = {"model": None}
+        payload = {"model": "claude-3", "messages": []}
+        result = BackendManager._resolve_payload(backend, payload)
+        assert result["model"] == "claude-3"
+
+    def test_base_model_fallback(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("backend.BASE_MODEL", "base-model-1")
+        backend = {"model": "base-model-1"}
+        payload = {"model": "original-model", "messages": []}
+        result = BackendManager._resolve_payload(backend, payload)
+        assert result["model"] == "base-model-1"
+
+    def test_backend_model_takes_precedence_over_base(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("backend.BASE_MODEL", "base-model-1")
+        backend = {"model": "gpt-4o"}
+        payload = {"model": "original-model", "messages": []}
+        result = BackendManager._resolve_payload(backend, payload)
+        assert result["model"] == "gpt-4o"
+
+    def test_no_modelanywhere_keeps_original(self) -> None:
+        backend: dict = {"model": None}
+        payload = {"model": "original-model", "messages": []}
+        result = BackendManager._resolve_payload(backend, payload)
+        assert result["model"] == "original-model"
+
+    def test_load_stores_resolved_model(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("backend.BASE_MODEL", "base-model-1")
+        m = BackendManager()
+        m.load([
+            ("backend-1", "https://api1.example.com/v1", "key-aaaa", "gpt-4o", None),
+            ("backend-2", "https://api2.example.com/v1", "key-bbbb", None, None),
+        ])
+        assert m.backends[0]["model"] == "gpt-4o"
+        assert m.backends[1]["model"] == "base-model-1"

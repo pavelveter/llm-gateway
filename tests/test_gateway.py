@@ -35,8 +35,8 @@ def configured_client(client: TestClient) -> TestClient:
     """Load test backends into the manager and return the client."""
     gw.backend_mgr.load(
         [
-            ("backend-1", "https://api1.example.com/v1/chat/completions", "key-aaaa", None),
-            ("backend-2", "https://api2.example.com/v1/chat/completions", "key-bbbb", None),
+            ("backend-1", "https://api1.example.com/v1/chat/completions", "key-aaaa", None, None),
+            ("backend-2", "https://api2.example.com/v1/chat/completions", "key-bbbb", None, None),
         ]
     )
     return client
@@ -135,8 +135,8 @@ class TestChatCompletionsNonStreaming:
         gw.backend_mgr = BackendManager()
         gw.backend_mgr.load(
             [
-                ("b1", "https://api1.example.com/v1/chat/completions", "k1", None),
-                ("b2", "https://api2.example.com/v1/chat/completions", "k2", None),
+                ("b1", "https://api1.example.com/v1/chat/completions", "k1", None, None),
+                ("b2", "https://api2.example.com/v1/chat/completions", "k2", None, None),
             ]
         )
 
@@ -173,8 +173,8 @@ class TestChatCompletionsNonStreaming:
         gw.backend_mgr = BackendManager()
         gw.backend_mgr.load(
             [
-                ("b1", "https://api1.example.com/v1/chat/completions", "k1", None),
-                ("b2", "https://api2.example.com/v1/chat/completions", "k2", None),
+                ("b1", "https://api1.example.com/v1/chat/completions", "k1", None, None),
+                ("b2", "https://api2.example.com/v1/chat/completions", "k2", None, None),
             ]
         )
         gw.backend_mgr.call = AsyncMock(  # type: ignore[method-assign]
@@ -208,8 +208,8 @@ class TestChatCompletionsNonStreaming:
         gw.backend_mgr = BackendManager()
         gw.backend_mgr.load(
             [
-                ("b1", "https://api1.example.com/v1/chat/completions", "k1", None),
-                ("b2", "https://api2.example.com/v1/chat/completions", "k2", None),
+                ("b1", "https://api1.example.com/v1/chat/completions", "k1", None, None),
+                ("b2", "https://api2.example.com/v1/chat/completions", "k2", None, None),
             ]
         )
         gw.backend_mgr.call = AsyncMock(  # type: ignore[method-assign]
@@ -261,8 +261,8 @@ class TestChatCompletionsStreaming:
 
         gw.backend_mgr.load(
             [
-                ("b1", "https://api1.example.com", "k1", None),
-                ("b2", "https://api2.example.com", "k2", None),
+                ("b1", "https://api1.example.com", "k1", None, None),
+                ("b2", "https://api2.example.com", "k2", None, None),
             ]
         )
 
@@ -290,8 +290,8 @@ class TestChatCompletionsStreaming:
 
         gw.backend_mgr.load(
             [
-                ("b1", "https://api1.example.com", "k1", None),
-                ("b2", "https://api2.example.com", "k2", None),
+                ("b1", "https://api1.example.com", "k1", None, None),
+                ("b2", "https://api2.example.com", "k2", None, None),
             ]
         )
 
@@ -326,8 +326,8 @@ class TestChatCompletionsStreaming:
 
         gw.backend_mgr.load(
             [
-                ("b1", "https://api1.example.com", "k1", None),
-                ("b2", "https://api2.example.com", "k2", None),
+                ("b1", "https://api1.example.com", "k1", None, None),
+                ("b2", "https://api2.example.com", "k2", None, None),
             ]
         )
 
@@ -362,8 +362,8 @@ class TestChatCompletionsStreaming:
 
         gw.backend_mgr.load(
             [
-                ("b1", "https://api1.example.com", "k1", None),
-                ("b2", "https://api2.example.com", "k2", None),
+                ("b1", "https://api1.example.com", "k1", None, None),
+                ("b2", "https://api2.example.com", "k2", None, None),
             ]
         )
 
@@ -394,8 +394,8 @@ class TestChatCompletionsStreaming:
 
         gw.backend_mgr.load(
             [
-                ("b1", "https://api1.example.com", "k1", None),
-                ("b2", "https://api2.example.com", "k2", None),
+                ("b1", "https://api1.example.com", "k1", None, None),
+                ("b2", "https://api2.example.com", "k2", None, None),
             ]
         )
         gw.backend_mgr.cooldowns["b1"] = time_module.time() + 999
@@ -431,8 +431,8 @@ class TestChatCompletionsStreamingEndpoint:
         gw.backend_mgr = BackendManager()
         gw.backend_mgr.load(
             [
-                ("b1", "https://api1.example.com/v1/chat/completions", "k1", None),
-                ("b2", "https://api2.example.com/v1/chat/completions", "k2", None),
+                ("b1", "https://api1.example.com/v1/chat/completions", "k1", None, None),
+                ("b2", "https://api2.example.com/v1/chat/completions", "k2", None, None),
             ]
         )
 
@@ -472,8 +472,8 @@ class TestChatCompletionsStreamingEndpoint:
         gw.backend_mgr = BackendManager()
         gw.backend_mgr.load(
             [
-                ("b1", "https://api1.example.com/v1/chat/completions", "k1", None),
-                ("b2", "https://api2.example.com/v1/chat/completions", "k2", None),
+                ("b1", "https://api1.example.com/v1/chat/completions", "k1", None, None),
+                ("b2", "https://api2.example.com/v1/chat/completions", "k2", None, None),
             ]
         )
 
@@ -540,8 +540,8 @@ class TestHealthBackends:
     async def test_health_backends_pings_all(self) -> None:
         gw.backend_mgr.load(
             [
-                ("b1", "https://api1.example.com/v1", "k1", None),
-                ("b2", "https://api2.example.com/v1", "k2", None),
+                ("b1", "https://api1.example.com/v1", "k1", None, None),
+                ("b2", "https://api2.example.com/v1", "k2", None, None),
             ]
         )
 
@@ -595,7 +595,7 @@ class TestRequestIDHeader:
         gw.backend_mgr = BackendManager()
         gw.backend_mgr.load(
             [
-                ("b1", "https://api1.example.com/v1/chat/completions", "k1", None),
+                ("b1", "https://api1.example.com/v1/chat/completions", "k1", None, None),
             ]
         )
 
@@ -629,7 +629,7 @@ class TestRequestIDHeader:
         gw.backend_mgr = BackendManager()
         gw.backend_mgr.load(
             [
-                ("b1", "https://api1.example.com/v1/chat/completions", "k1", None),
+                ("b1", "https://api1.example.com/v1/chat/completions", "k1", None, None),
             ]
         )
 

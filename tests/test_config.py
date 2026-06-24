@@ -11,10 +11,11 @@ class TestLoadBackends:
         monkeypatch.delenv("BACKEND_2_URL", raising=False)
         monkeypatch.delenv("BACKEND_2_KEY", raising=False)
         monkeypatch.delenv("BACKEND_1_MODEL", raising=False)
+        monkeypatch.delenv("BACKEND_1_PROXY", raising=False)
 
         backends = load_backends()
         assert len(backends) == 1
-        assert backends[0] == ("backend-1", "https://api.example.com/v1", "sk-test", None)
+        assert backends[0] == ("backend-1", "https://api.example.com/v1", "sk-test", None, None)
 
     def test_loads_multiple_backends(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("BACKEND_1_URL", "https://api1.example.com/v1")
@@ -25,6 +26,8 @@ class TestLoadBackends:
         monkeypatch.delenv("BACKEND_3_KEY", raising=False)
         monkeypatch.delenv("BACKEND_1_MODEL", raising=False)
         monkeypatch.delenv("BACKEND_2_MODEL", raising=False)
+        monkeypatch.delenv("BACKEND_1_PROXY", raising=False)
+        monkeypatch.delenv("BACKEND_2_PROXY", raising=False)
 
         backends = load_backends()
         assert len(backends) == 2
@@ -43,8 +46,8 @@ class TestLoadBackends:
 
         backends = load_backends()
         assert len(backends) == 2
-        assert backends[0] == ("backend-1", "https://api1.example.com/v1", "key-1", "gpt-4o")
-        assert backends[1] == ("backend-2", "https://api2.example.com/v1", "key-2", "claude-3-opus")
+        assert backends[0] == ("backend-1", "https://api1.example.com/v1", "key-1", "gpt-4o", None)
+        assert backends[1] == ("backend-2", "https://api2.example.com/v1", "key-2", "claude-3-opus", None)
 
     def test_raises_on_missing_url(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("BACKEND_1_URL", raising=False)

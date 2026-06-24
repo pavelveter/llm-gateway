@@ -11,11 +11,13 @@ An OpenAI-compatible LLM proxy gateway with automatic backend failover, rate-lim
 - **Cooldown scoring** — backends that fail get temporary cooldowns (10s for timeouts, 15s for other errors); the gateway routes around them
 - **Latency-weighted selection** — among healthy backends, the fastest one is picked
 - **Chat logging** — requests and responses logged to rotating files
-- **Connection pooling** — shared httpx.AsyncClient per backend manager for efficient TCP reuse
+- **Connection pooling** — shared httpx.AsyncClient per backend (with optional per-backend proxy support)
 - **Circuit breaker** — exponential cooldown on repeated backend failures (15s → 30s → 60s → ...)
 - **Request body validation** — rejects payloads exceeding `LLM_MAX_REQUEST_BYTES` with 413
 - **Request tracing** — `X-Request-ID` header in all chat responses for troubleshooting
 - **Model aliasing** — set `BACKEND_N_MODEL` to route specific model names to specific backends
+- **Per-backend proxy** — set `BACKEND_N_PROXY` to route a backend through HTTP(S) or SOCKS5 proxy
+- **Base model fallback** — set `BASE_MODEL` as a default model; backends without `BACKEND_N_MODEL` use it instead
 - **Metrics** — `/metrics` endpoint with per-backend latency stats (p50, p99), failure counts
 - **Health ping** — `/health/backends` endpoint with live HEAD requests to verify backend reachability
 - **Docker** — multi-stage build with uv, slim runtime image, healthcheck
@@ -29,9 +31,15 @@ Copy `.env.example` to `.env` and fill in your API URLs and keys:
 ```env
 BACKEND_1_URL=https://api.openai.com/v1/chat/completions
 BACKEND_1_KEY=sk-your-key-here
+# BACKEND_1_MODEL=gpt-4o
+# BACKEND_1_PROXY=socks5://user:pass@127.0.0.1:1080
 
 BACKEND_2_URL=https://api.anthropic.com/v1/messages
 BACKEND_2_KEY=sk-ant-another-key-here
+# BACKEND_2_PROXY=http://proxy.example.com:8080
+
+# Default model sent to backends that don't specify BACKEND_N_MODEL
+# BASE_MODEL=gpt-4o-mini
 ```
 
 Add as many backends as you need: `BACKEND_3_URL`/`BACKEND_3_KEY`, etc.
@@ -135,6 +143,8 @@ For streaming clients, errors are delivered as SSE `data:` events with `[DONE]` 
 | `BACKEND_N_URL` | *required* | OpenAI-compatible chat completions endpoint |
 | `BACKEND_N_KEY` | *required* | API key (sent as `Bearer <key>`) |
 | `BACKEND_N_MODEL` | *(empty)* | Route this model name exclusively to this backend |
+| `BACKEND_N_PROXY` | *(empty)* | Route this backend through a proxy (`http://`, `https://`, or `socks5://`) |
+| `BASE_MODEL` | *(empty)* | Default model for backends without `BACKEND_N_MODEL` (fallback chain: `BACKEND_N_MODEL` > `BASE_MODEL` > request model) |
 | `LLM_RPM_LIMIT` | `38` | Max requests per minute per backend |
 | `LLM_QUEUE_MAX` | `100` | Max pending non-streaming requests |
 | `LLM_WORKERS` | `2` | Number of worker coroutines |
